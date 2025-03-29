@@ -1,7 +1,8 @@
-package gochip8
+package emulator
 
 import (
-	"errors"
+	"fmt"
+	"os"
 )
 
 var font_set = []uint8{
@@ -23,28 +24,10 @@ var font_set = []uint8{
 	0xF0, 0x80, 0xF0, 0x80, 0x80, // F
 }
 
-type stack []uint16
-
-func (s stack) Push(v uint16) stack {
-	return append(s, v)
-}
-
-func (s stack) Pop() (uint16, error) {
-	l := len(s)
-	if l == 0 {
-		return 0, errors.New("Empty Stack")
-	}
-
-	result := s[l-1]
-	s = s[:l-1]
-
-	return result, nil
-}
-
 type Chip8 struct {
 	memory      [4096]uint8   // 4kb of ram
-	display     [64][32]uint8 //64 x 32 ram
-	stack       [16]stack     //program stack
+	display     [32][64]uint8 //64 x 32 ram
+	stack       [16]uint16    //program stack
 	key         [16]uint8
 	delay_timer uint8
 	sound_timer uint8
@@ -72,6 +55,10 @@ func Init() Chip8 {
 
 }
 
+func (c *Chip8) Buffer() [32][64]uint8 {
+	return c.display
+}
+
 func (c *Chip8) Draw() bool {
 	sd := c.doDraw
 	c.doDraw = false
@@ -79,10 +66,18 @@ func (c *Chip8) Draw() bool {
 
 }
 
+func (c *Chip8) Key(num uint8, down bool) {
+	if down {
+		c.key[num] = 1
+	} else {
+		c.key[num] = 0
+	}
+}
+
 func (c *Chip8) Cycle() {
 
 	//ideally this is the fetch stage
-	c.oc = (uint16(c.memory[c.pc]) | uint16(c.memory[c.pc+1]))
+	c.oc = (uint16(c.memory[c.pc]) << 8) | uint16(c.memory[c.pc+1])
 	c.pc += 2
 
 	//ideally this is the decode stage
@@ -90,31 +85,33 @@ func (c *Chip8) Cycle() {
 	case 0x0000:
 		switch c.oc {
 		case 0x00E0: //clear screen
-			for x := 0; x < 64; x++ {
-				for y := 0; y < 32; y++ {
-					c.display[x][y] = 0
+			for i := 0; i < len(c.display); i++ {
+				for j := 0; j < len(c.display[i]); j++ {
+					c.display[i][j] = 0x0
 				}
 			}
+			c.doDraw = true
+
 		}
-		break
+
 	case 0x1000: //jump to 0x1NNN
 		c.pc = c.oc & 0x0FFF
-		break
-	case 0x6000:
+
+	case 0x6000: //Set
 		x := (c.oc & 0x0F00) >> 8
 		nn := uint8(c.oc & 0x00FF)
 		c.vx[x] = nn
-		break
-	case 0x7000:
+
+	case 0x7000: //add
 		x := (c.oc & 0x0F00) >> 8
 		nn := uint8(c.oc & 0x00FF)
 
 		c.vx[x] = c.vx[x] + nn
-		break
-	case 0xA000:
+
+	case 0xA000: //set index
 		c.iv = uint16(c.oc & 0x0FFF)
-		break
-	case 0xD000:
+
+	case 0xD000: //draw
 		n_pixels := c.oc & 0x000F
 		x := c.vx[(c.oc&0x0F00)>>8]
 		y := c.vx[(c.oc&0x00F0)>>4]
@@ -135,8 +132,34 @@ func (c *Chip8) Cycle() {
 		}
 		c.doDraw = true
 
-		break
+	}
+}
 
+func (c *Chip8) Load(fileName string) error {
+
+	file, err := os.OpenFile(fileName, os.O_RDONLY, 0777)
+	if err != nil {
+		return err
 	}
 
+	defer file.Close()
+	fileInfo, FileStatErr := file.Stat()
+	if FileStatErr != nil {
+		return FileStatErr
+	}
+
+	if int64(len(c.memory)-512) < fileInfo.Size() {
+		return fmt.Errorf("program size bigger than memory")
+	}
+
+	fileBuffer := make([]byte, fileInfo.Size())
+	if _, ReadErr := file.Read(fileBuffer); ReadErr != nil {
+		return ReadErr
+	}
+
+	for i := 0; i < len(fileBuffer); i++ {
+		c.memory[i+512] = fileBuffer[i]
+	}
+
+	return nil
 }
