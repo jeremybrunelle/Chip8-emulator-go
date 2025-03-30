@@ -36,7 +36,7 @@ type Chip8 struct {
 	oc uint16
 	pc uint16 // program counter, points to current instruction in memory
 	iv uint16 // indexes memory
-	sp uint16 //stack pointer
+	sp int32  //stack pointer
 
 	doDraw bool
 }
@@ -44,11 +44,16 @@ type Chip8 struct {
 func Init() Chip8 {
 	emu := Chip8{
 		pc:     0x200,
+		sp:     0,
 		doDraw: true,
 	}
 
 	for i := 0; i < len(font_set); i++ {
 		emu.memory[i] = font_set[i]
+	}
+
+	for i := 0; i < len(emu.stack); i++ {
+		emu.stack[i] = 0x0
 	}
 
 	return emu
@@ -64,6 +69,20 @@ func (c *Chip8) Draw() bool {
 	c.doDraw = false
 	return sd
 
+}
+
+func (c *Chip8) Push(inst uint16) {
+
+	if c.stack[c.sp] == 0 {
+		c.stack[c.sp] = inst
+	} else {
+		c.sp += 1
+		c.stack[c.sp] = inst
+	}
+}
+
+func (c *Chip8) Pop() uint16 {
+	return c.stack[c.sp]
 }
 
 func (c *Chip8) Key(num uint8, down bool) {
@@ -92,11 +111,36 @@ func (c *Chip8) Cycle() {
 			}
 			c.doDraw = true
 
+		case 0x00EE: //Subroutines
+			c.pc = c.Pop()
 		}
 
 	case 0x1000: //jump to 0x1NNN
 		c.pc = c.oc & 0x0FFF
 
+	case 0x2000:
+		c.Push(c.pc)
+		c.pc = c.oc & 0x0FFF
+
+	case 0x3000:
+		x := (c.oc & 0x0F00) >> 8
+		nn := uint8(c.oc & 0x00FF)
+		if c.vx[x] == nn {
+			c.pc += 2
+		}
+
+	case 0x4000:
+		x := (c.oc & 0x0F00) >> 8
+		nn := uint8(c.oc & 0x00FF)
+		if c.vx[x] != nn {
+			c.pc += 2
+		}
+	case 0x5000:
+		x := (c.oc & 0x0F00) >> 8
+		y := (c.oc & 0x00F0) >> 4
+		if c.vx[x] == c.vx[y] {
+			c.pc += 2
+		}
 	case 0x6000: //Set
 		x := (c.oc & 0x0F00) >> 8
 		nn := uint8(c.oc & 0x00FF)
@@ -107,6 +151,52 @@ func (c *Chip8) Cycle() {
 		nn := uint8(c.oc & 0x00FF)
 
 		c.vx[x] = c.vx[x] + nn
+
+	case 0x8000:
+		x := (c.oc & 0x0F00) >> 8
+		y := (c.oc & 0x00F0) >> 4
+		switch c.oc & 0x000F {
+		case 0:
+
+			c.vx[x] = c.vx[y]
+		case 1:
+			c.vx[x] = c.vx[x] | c.vx[y]
+		case 2:
+			c.vx[x] = c.vx[x] & c.vx[y]
+		case 3:
+			c.vx[x] = c.vx[x] ^ c.vx[y]
+		case 4:
+			if c.vx[x]+c.vx[y] > 255 {
+				c.vx[0xF] = uint8(1)
+			} else {
+				c.vx[x] = c.vx[x] + c.vx[y]
+				c.vx[0xF] = uint8(1)
+			}
+		case 5:
+			if c.vx[x] > c.vx[y] {
+				c.vx[0xF] = uint8(1)
+				c.vx[x] = c.vx[x] - c.vx[y]
+			} else {
+				c.vx[0xF] = uint8(0)
+			}
+		case 6: //need to finish
+			c.vx[x] = c.vx[y]
+			c.vx[x] = uint8(c.vx[x] << 1)
+		case 7:
+			if c.vx[y] > c.vx[x] {
+				c.vx[0xF] = uint8(1)
+				c.vx[y] = c.vx[y] - c.vx[x]
+			} else {
+				c.vx[0xF] = uint8(0)
+			}
+		}
+
+	case 0x9000:
+		x := (c.oc & 0x0F00) >> 8
+		y := (c.oc & 0x00F0) >> 4
+		if c.vx[x] != c.vx[y] {
+			c.pc += 2
+		}
 
 	case 0xA000: //set index
 		c.iv = uint16(c.oc & 0x0FFF)
