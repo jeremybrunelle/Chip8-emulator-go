@@ -156,39 +156,41 @@ func (c *Chip8) Cycle() {
 		x := (c.oc & 0x0F00) >> 8
 		y := (c.oc & 0x00F0) >> 4
 		switch c.oc & 0x000F {
-		case 0:
+		case 0x0000:
 
 			c.vx[x] = c.vx[y]
-		case 1:
+		case 0x0001:
 			c.vx[x] = c.vx[x] | c.vx[y]
-		case 2:
+		case 0x0002:
 			c.vx[x] = c.vx[x] & c.vx[y]
-		case 3:
+		case 0x0003:
 			c.vx[x] = c.vx[x] ^ c.vx[y]
-		case 4:
+		case 0x0004:
 			if c.vx[x]+c.vx[y] > 255 {
 				c.vx[0xF] = uint8(1)
 			} else {
 				c.vx[x] = c.vx[x] + c.vx[y]
 				c.vx[0xF] = uint8(1)
 			}
-		case 5:
+		case 0x0005:
 			if c.vx[x] > c.vx[y] {
 				c.vx[0xF] = uint8(1)
 				c.vx[x] = c.vx[x] - c.vx[y]
 			} else {
 				c.vx[0xF] = uint8(0)
 			}
-		case 6: //need to finish
-			c.vx[x] = c.vx[y]
-			c.vx[x] = uint8(c.vx[x] << 1)
-		case 7:
+		case 0x0006: //need to finish
+			c.vx[0xF] = c.vx[(c.oc&0x0F00)>>8] & 0x1
+			c.vx[(c.oc&0x0F00)>>8] = c.vx[(c.oc&0x0F00)>>8] >> 1
+		case 0x0007:
 			if c.vx[y] > c.vx[x] {
 				c.vx[0xF] = uint8(1)
 				c.vx[y] = c.vx[y] - c.vx[x]
 			} else {
 				c.vx[0xF] = uint8(0)
 			}
+			c.vx[(c.oc&0x0F00)>>8] = c.vx[(c.oc&0x00F0)>>4] - c.vx[(c.oc&0x0F00)>>8]
+
 		}
 
 	case 0x9000:
@@ -222,7 +224,71 @@ func (c *Chip8) Cycle() {
 		}
 		c.doDraw = true
 
+	case 0xE000:
+		switch c.oc & 0x00FF {
+		case 0x009E:
+			if c.key[c.vx[(c.oc&0x0F00)>>8]] == 1 {
+				c.pc += 2
+			}
+		case c.oc & 0x00FF:
+			if c.key[c.vx[(c.oc&0x0F00)>>8]] != 1 {
+				c.pc += 2
+			}
+
+		}
+	case 0xF000:
+		switch c.oc & 0x00FF {
+		case 0x0007:
+			vx := (c.oc & 0x0F00) >> 8
+			c.vx[vx] = c.delay_timer
+		case 0x000A:
+			c.pc -= 2
+			key := (c.oc & 0x0F00) >> 8
+
+			if c.key[key] == 1 {
+				c.pc += 2
+				c.vx[key] = uint8(key)
+			}
+
+		case 0x0015:
+			vx := (c.oc & 0x0F00) >> 8
+			c.delay_timer = c.vx[vx]
+		case 0x0018:
+			vx := (c.oc & 0x0F00) >> 8
+			c.sound_timer = c.vx[vx]
+		case 0x001E:
+			if c.iv+uint16(c.vx[(c.oc&0x0F00)>>8]) > 0xFFF {
+				c.vx[0xF] = 1
+			} else {
+				c.vx[0xF] = 0
+			}
+			c.iv += uint16(c.vx[(c.oc&0x0F00)>>8])
+		case 0x0029:
+			c.iv = uint16(c.vx[(c.oc&0xF00)>>8]) * 0x5
+
+		case 0x0033:
+			c.memory[c.iv] = c.vx[(c.oc&0x0F00)>>8] / 100
+			c.memory[c.iv+1] = (c.vx[(c.oc&0x0F00)>>8] / 10) % 10
+			c.memory[c.iv+2] = (c.vx[(c.oc&0x0F00)>>8] / 100) % 10
+
+		case 0x0055:
+			x := int((c.oc & 0x0F00) >> 8)
+			for i := 0; i <= x+1; i++ {
+				c.memory[c.iv+uint16(i)] = c.vx[i]
+			}
+			c.iv = ((c.oc & 0x0F00) >> 8) + 1
+		case 0x0065:
+			for i := 0; i < int((c.oc&0x0F00)>>8)+1; i++ {
+				c.vx[i] = c.memory[c.iv+uint16(i)]
+			}
+			c.iv = ((c.oc & 0x0F00) >> 8) + 1
+
+		}
 	}
+	if c.delay_timer > 0 {
+		c.delay_timer = c.delay_timer - 1
+	}
+
 }
 
 func (c *Chip8) Load(fileName string) error {
